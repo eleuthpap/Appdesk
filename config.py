@@ -13,5 +13,5 @@ UI_POLL_MS: int = 15       # How often the client checks for a new frame
 MOUSE_MOVE_MAX_HZ: int = 120  # Max forwarded mouse-move events per second
 
 # Default relay endpoint for cross-network sessions (host:port)
-RELAY_SERVER = "35.209.231.40:5902" # google
+RELAY_SERVER = "136.64.154.29:5902" # google
 # RELAY_SERVER = "91.99.214.41:5902"
