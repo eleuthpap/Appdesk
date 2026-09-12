@@ -158,14 +158,28 @@ class ScreenServer:
                 pass
             resp = handshake(sock, {"role": "host", "channel": "screen"})
             self.session_id = resp["id"]
+            print(f"[HOST SCREEN] Handshake complete! Session ID: {self.session_id}")
+            print(f"[HOST SCREEN] Registered session ID: {self.session_id}")
             if self.on_session_ready:
                 self.on_session_ready(self.session_id)
+
+            print("[HOST SCREEN] Waiting for client to connect before streaming...")
+            # Wait for relay signal that client has connected
+            ready_line = sock.recv(1024)
+            if not ready_line or b"start" not in ready_line:
+                print(f"[HOST SCREEN] Did not receive valid start signal: {ready_line}")
+                return
+
+            print("[HOST SCREEN] Client connected! Starting stream...")
             if self.on_client_connected:
                 self.on_client_connected(("relay", 0))
             self._stream_to(sock)
-        except (OSError, ConnectionError):
-            pass
+        except Exception as exc:
+            print(f"[HOST SCREEN ERROR] Relay connection failed or dropped: {exc}")
+            import traceback
+            traceback.print_exc()
         finally:
+            print("[HOST SCREEN] Closing socket.")
             try:
                 sock.close()
             except OSError:
@@ -175,8 +189,11 @@ class ScreenServer:
 
     def _stream_to(self, conn: socket.socket) -> None:
         interval = 1.0 / config.FPS
+        frames_sent = 0
+        print("[HOST STREAM] Starting screen capture and stream...")
         with mss.mss() as sct:
             monitor = sct.monitors[1]   # primary monitor
+            print(f"[HOST STREAM] Primary monitor size: {monitor['width']}x{monitor['height']}")
             while self._running:
                 t0 = time.monotonic()
 
@@ -199,7 +216,11 @@ class ScreenServer:
                         + struct.pack("B", len(cursor)) + cursor
                         + ts
                     )
-                except OSError:
+                    frames_sent += 1
+                    if frames_sent <= 5 or frames_sent % 100 == 0:
+                        print(f"[HOST STREAM] Sent frame #{frames_sent} ({len(data)} bytes)")
+                except OSError as exc:
+                    print(f"[HOST STREAM ERROR] Socket error while sending: {exc}")
                     break
 
                 # Throttle to target FPS

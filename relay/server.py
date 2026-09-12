@@ -168,6 +168,11 @@ def _handle(conn: socket.socket, addr: tuple) -> None:
         piped = True   # pipe threads (or the other handler) now own the sockets
         if slot.claim_pipe():
             h, c = slot.host, slot.client
+            if chan == "screen":
+                try:
+                    h.sendall(b"start\n")
+                except OSError:
+                    pass
             threading.Thread(target=_pipe, args=(h, c), daemon=True).start()
             threading.Thread(target=_pipe, args=(c, h), daemon=True).start()
 
