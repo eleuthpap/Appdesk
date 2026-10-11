@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import socket
+import threading
+from collections import deque
 
 import config
 
@@ -11,12 +13,17 @@ class InputForwarder:
     Connects to an InputExecutor on the host and sends newline-delimited JSON
     input events.
 
-    Call connect() first, then use send_event() freely from the Tkinter thread.
+    Call connect() first, then queue events from the Tkinter thread. A worker
+    sends them so network stalls cannot block screen rendering or local input.
     """
 
     def __init__(self, host: str) -> None:
         self._host = host
         self._sock: socket.socket | None = None
+        self._events: deque[dict] = deque()
+        self._condition = threading.Condition()
+        self._running = False
+        self._thread: threading.Thread | None = None
 
     # ------------------------------------------------------------------ public
 
@@ -38,18 +45,50 @@ class InputForwarder:
             )
         else:
             self._sock.connect((self._host, config.INPUT_PORT))
+        self._running = True
+        self._thread = threading.Thread(target=self._send_loop, daemon=True)
+        self._thread.start()
 
     def stop(self) -> None:
+        with self._condition:
+            self._running = False
+            self._events.clear()
+            self._condition.notify_all()
         if self._sock:
+            try:
+                self._sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
             try:
                 self._sock.close()
             except OSError:
                 pass
 
     def send_event(self, event: dict) -> None:
-        if self._sock is None:
-            return
-        try:
-            self._sock.sendall((json.dumps(event) + "\n").encode("utf-8"))
-        except OSError:
-            pass
+        with self._condition:
+            if not self._running:
+                return
+            # Only the newest unsent move matters. Keep clicks, keys, scrolls,
+            # and the order between those events unchanged.
+            if event.get("type") == "move" and self._events and self._events[-1].get("type") == "move":
+                self._events[-1] = event
+            else:
+                self._events.append(event)
+            self._condition.notify()
+
+    def _send_loop(self) -> None:
+        sock = self._sock
+        while True:
+            with self._condition:
+                while self._running and not self._events:
+                    self._condition.wait()
+                if not self._running:
+                    return
+                event = self._events.popleft()
+            try:
+                sock.sendall((json.dumps(event) + "\n").encode("utf-8"))
+            except OSError:
+                with self._condition:
+                    self._running = False
+                    self._events.clear()
+                return

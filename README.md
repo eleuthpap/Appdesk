@@ -238,6 +238,7 @@ For direct LAN mode, delete the value in the Relay host:port field, enter the Ho
 - Client opens screen and input channels separately.
 - UI shows rendered FPS and frame response time in the remote session title. Frame response is measured from a client acknowledgement until a later frame is rendered, using only the client's monotonic clock. It includes network travel, host processing, and client rendering; it is not a one-way network latency reading.
 - The client acknowledges decoded frames with its clock value so the host keeps at most two frames in flight and echoes that value in a later frame. This prevents old frames from piling up on slower connections while keeping the configured image resolution and JPEG quality. If bandwidth is limited, FPS may fall.
+- The client checks for fresh frames every 5 ms and sends input from a worker thread. Pending mouse moves are merged; clicks and keys keep their order.
 - Update both app computers for this frame protocol. In relay mode, deploy the updated `relay/server.py` to forward acknowledgements promptly.
 - If network drops, session window closes and warns user.
 - Direct LAN mode uses the Host local IP address and ports 5900 and 5901.

@@ -51,6 +51,7 @@ class SessionWindow(ctk.CTkToplevel):
         self._canvas_w = config.STREAM_WIDTH
         self._canvas_h = config.STREAM_HEIGHT
         self._frame_times: deque = deque()   # timestamps of recent frames for FPS
+        self._last_title_update = 0.0
         self._last_cursor: str = "arrow"
         self._last_move_sent = 0.0
         self._move_interval = 1.0 / max(1, int(config.MOUSE_MOVE_MAX_HZ))
@@ -125,11 +126,13 @@ class SessionWindow(ctk.CTkToplevel):
             self._frame_times.append(now)
             while self._frame_times and self._frame_times[0] < now - 1.0:
                 self._frame_times.popleft()
-            response = f"{(now - ack_time) * 1000:.0f} ms" if ack_time >= 0 else "-- ms"
-            self.title(
-                f"Appdesk – Remote Session  |  {len(self._frame_times)} FPS"
-                f"  |  Frame response {response}"
-            )
+            if now - self._last_title_update >= 0.25:
+                response = f"{(now - ack_time) * 1000:.0f} ms" if ack_time >= 0 else "-- ms"
+                self.title(
+                    f"Appdesk – Remote Session  |  {len(self._frame_times)} FPS"
+                    f"  |  Frame response {response}"
+                )
+                self._last_title_update = now
         except queue.Empty:
             pass
 

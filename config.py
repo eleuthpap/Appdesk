@@ -9,7 +9,7 @@ FPS:          int = 30    # Target capture / stream frame rate
 STREAM_WIDTH:  int = 1600  # Resolution frames are resized to before sending
 STREAM_HEIGHT: int = 900
 
-UI_POLL_MS: int = 15       # How often the client checks for a new frame
+UI_POLL_MS: int = 5        # How often the client checks for a new frame
 MOUSE_MOVE_MAX_HZ: int = 120  # Max forwarded mouse-move events per second
 
 # Default relay endpoint for cross-network sessions (host:port)
