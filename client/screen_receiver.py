@@ -6,6 +6,7 @@ import socket
 import struct
 import threading
 import time
+from collections import deque
 
 from PIL import Image
 
@@ -25,6 +26,16 @@ class ScreenReceiver:
         self._thread: threading.Thread | None = None
         self._running = False
         self.frame_queue: queue.Queue = queue.Queue(maxsize=1)
+        self._received_times: deque[float] = deque()
+        self._stats_lock = threading.Lock()
+
+    @property
+    def received_fps(self) -> int:
+        with self._stats_lock:
+            cutoff = time.monotonic() - 1.0
+            while self._received_times and self._received_times[0] < cutoff:
+                self._received_times.popleft()
+            return len(self._received_times)
 
     # ------------------------------------------------------------------ public
 
@@ -90,6 +101,11 @@ class ScreenReceiver:
 
                 img = Image.open(io.BytesIO(jpeg))
                 img.load()
+                with self._stats_lock:
+                    now = time.monotonic()
+                    self._received_times.append(now)
+                    while self._received_times and self._received_times[0] < now - 1.0:
+                        self._received_times.popleft()
                 # Drop stale frame if the consumer is slow (prefer freshness)
                 if self.frame_queue.full():
                     try:

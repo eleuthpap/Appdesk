@@ -190,6 +190,12 @@ View logs:
 sudo journalctl -u appdesk-relay -f
 ```
 
+When `relay/server.py` changes, copy it to the VPS again using the `scp` command in step 6.1, then restart the running service:
+
+```bash
+sudo systemctl restart appdesk-relay
+```
+
 ## 7) Point Appdesk to your relay
 
 Edit config.py and set:
@@ -241,6 +247,7 @@ For direct LAN mode, delete the value in the Relay host:port field, enter the Ho
 - The client acknowledges decoded frames with its clock value; the host echoes that value in a later frame and uses acknowledgement timing to tune its send window. The configured image resolution and JPEG quality stay the same. If bandwidth is limited, FPS may fall.
 - The client checks for fresh frames every 5 ms and sends input from a worker thread. Pending mouse moves are merged; clicks and keys keep their order.
 - Update both app computers for this frame protocol. In relay mode, deploy the updated `relay/server.py` to forward acknowledgements promptly.
+- If the client FPS is low, compare the session title's displayed and received FPS. The host window shows its send FPS, average JPEG size, capture and encode time, socket send time, send window, and acknowledgement time. Similar host and received FPS with slow sends points to the relay path; high received FPS with low displayed FPS points to client rendering.
 - If network drops, session window closes and warns user.
 - Direct LAN mode uses the Host local IP address and ports 5900 and 5901.
 

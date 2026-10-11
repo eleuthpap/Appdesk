@@ -130,6 +130,7 @@ class SessionWindow(ctk.CTkToplevel):
                 response = f"{(now - ack_time) * 1000:.0f} ms" if ack_time >= 0 else "-- ms"
                 self.title(
                     f"Appdesk – Remote Session  |  {len(self._frame_times)} FPS"
+                    f" (received {self._receiver.received_fps})"
                     f"  |  Frame response {response}"
                 )
                 self._last_title_update = now

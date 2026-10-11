@@ -93,6 +93,7 @@ class ScreenServer:
         self._server_sock: socket.socket | None = None
         self._client_sock: socket.socket | None = None
         self._thread: threading.Thread | None = None
+        self.stream_stats: tuple[float, float, float, float, int, float] | None = None
 
     # ------------------------------------------------------------------ public
 
@@ -208,7 +209,9 @@ class ScreenServer:
     def _send_frames(self, conn: socket.socket) -> None:
         interval = 1.0 / config.FPS
         frames_sent = 0
+        self.stream_stats = None
         last_ack_time = -1.0
+        last_rtt = 0.0
         pending: deque[float] = deque()
         condition = threading.Condition()
         window = 2
@@ -218,7 +221,7 @@ class ScreenServer:
         ack_stop = threading.Event()
 
         def read_acks() -> None:
-            nonlocal last_ack_time, window, min_rtt, good_acks, ack_closed
+            nonlocal last_ack_time, last_rtt, window, min_rtt, good_acks, ack_closed
             try:
                 while self._running and not ack_stop.is_set():
                     ack = bytearray(8)
@@ -239,6 +242,7 @@ class ScreenServer:
                         if not pending:
                             raise ConnectionError("Unexpected frame acknowledgement")
                         rtt = now - pending.popleft()
+                        last_rtt = rtt
                         last_ack_time = struct.unpack(">d", ack)[0]
                         min_rtt = rtt if min_rtt is None else min(min_rtt, rtt)
                         # Grow the pipeline on a clear link; back off when the
@@ -263,6 +267,11 @@ class ScreenServer:
         ack_thread = threading.Thread(target=read_acks, daemon=True)
         ack_thread.start()
         print("[HOST STREAM] Starting screen capture and stream...")
+        sample_start = time.monotonic()
+        sample_frames = 0
+        sample_bytes = 0
+        sample_encode = 0.0
+        sample_send = 0.0
         try:
             with mss.mss() as sct:
                 monitor = sct.monitors[1]   # primary monitor
@@ -283,6 +292,7 @@ class ScreenServer:
                     buf = io.BytesIO()
                     img.save(buf, format="JPEG", quality=config.JPEG_QUALITY)
                     data = buf.getvalue()
+                    encoded_at = time.monotonic()
 
                     # Echo the client's clock value so it can measure a frame
                     # response without comparing clocks on different computers.
@@ -295,12 +305,36 @@ class ScreenServer:
 
                     # Send: [4-byte JPEG size][JPEG][1-byte cursor len][cursor][8-byte echoed time]
                     try:
+                        send_started = time.monotonic()
                         conn.sendall(
                             struct.pack(">L", len(data)) + data
                             + struct.pack("B", len(cursor)) + cursor
                             + ack_time
                         )
+                        sent_at = time.monotonic()
                         frames_sent += 1
+                        sample_frames += 1
+                        sample_bytes += len(data)
+                        sample_encode += encoded_at - t0
+                        sample_send += sent_at - send_started
+                        elapsed = sent_at - sample_start
+                        if elapsed >= 2.0:
+                            with condition:
+                                current_window = window
+                                current_rtt = last_rtt
+                            self.stream_stats = (
+                                sample_frames / elapsed,
+                                sample_encode * 1000 / sample_frames,
+                                sample_send * 1000 / sample_frames,
+                                sample_bytes / 1024 / sample_frames,
+                                current_window,
+                                current_rtt * 1000,
+                            )
+                            sample_start = sent_at
+                            sample_frames = 0
+                            sample_bytes = 0
+                            sample_encode = 0.0
+                            sample_send = 0.0
                         if frames_sent <= 5 or frames_sent % 100 == 0:
                             print(f"[HOST STREAM] Sent frame #{frames_sent} ({len(data)} bytes)")
                     except OSError as exc:
@@ -312,6 +346,7 @@ class ScreenServer:
                     if remaining > 0:
                         time.sleep(remaining)
         finally:
+            self.stream_stats = None
             ack_stop.set()
             try:
                 conn.shutdown(socket.SHUT_RDWR)

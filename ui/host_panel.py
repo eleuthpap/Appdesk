@@ -25,8 +25,10 @@ class HostPanel(ctk.CTkToplevel):
         self._relay_addr = relay_addr.strip()
         self._session_var = ctk.StringVar(value=screen_server.session_id or "-")
         self._status_var = ctk.StringVar(value="Waiting for connection…")
+        self._stream_stats_var = ctk.StringVar(value="Stream: waiting for frames")
         self._build_ui()
         self.protocol("WM_DELETE_WINDOW", self._stop)
+        self._stats_after_id = self.after(1000, self._update_stream_stats)
 
         # Callbacks are invoked from the ScreenServer background thread;
         # self.after() marshals them safely onto the Tk main thread.
@@ -78,6 +80,11 @@ class HostPanel(ctk.CTkToplevel):
             ).grid(row=4, column=1, sticky="w", padx=(10, 0), pady=(8, 0))
 
         ctk.CTkLabel(outer, textvariable=self._status_var).pack(pady=(12, 12))
+        ctk.CTkLabel(
+            outer,
+            textvariable=self._stream_stats_var,
+            justify="left",
+        ).pack(pady=(0, 12))
 
         ctk.CTkButton(
             outer,
@@ -127,7 +134,20 @@ class HostPanel(ctk.CTkToplevel):
             self.clipboard_append(sid)
             self._status_var.set("Session ID copied to clipboard")
 
+    def _update_stream_stats(self) -> None:
+        stats = self._screen_server.stream_stats
+        if stats is None:
+            self._stream_stats_var.set("Stream: waiting for frames")
+        else:
+            fps, encode_ms, send_ms, kb, window, rtt_ms = stats
+            self._stream_stats_var.set(
+                f"Host: {fps:.1f} FPS | JPEG {kb:.0f} KB | Window {window}\n"
+                f"Capture + encode {encode_ms:.0f} ms | Send {send_ms:.0f} ms | ACK {rtt_ms:.0f} ms"
+            )
+        self._stats_after_id = self.after(1000, self._update_stream_stats)
+
     def _stop(self) -> None:
+        self.after_cancel(self._stats_after_id)
         self._screen_server.stop()
         self._input_executor.stop()
         self.destroy()
