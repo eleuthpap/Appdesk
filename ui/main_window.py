@@ -82,9 +82,9 @@ class MainWindow(ctk.CTkFrame):
             font=("Times New Roman", 12, "bold")
         ).pack(anchor="w")
         self._session_var = ctk.StringVar(value="")
-        ctk.CTkEntry(conn_frame, textvariable=self._session_var, width=260).pack(
-            anchor="w", pady=(2, 8)
-        )
+        session_entry = ctk.CTkEntry(conn_frame, textvariable=self._session_var, width=260)
+        session_entry.pack(anchor="w", pady=(2, 8))
+        session_entry.bind("<Return>", lambda _event: self._start_connect())
         ctk.CTkButton(
             conn_frame,
             text="Connect",
