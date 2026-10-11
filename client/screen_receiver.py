@@ -23,7 +23,7 @@ class ScreenReceiver:
         self._sock: socket.socket | None = None
         self._thread: threading.Thread | None = None
         self._running = False
-        self.frame_queue: queue.Queue = queue.Queue(maxsize=2)
+        self.frame_queue: queue.Queue = queue.Queue(maxsize=1)
 
     # ------------------------------------------------------------------ public
 
@@ -96,6 +96,9 @@ class ScreenReceiver:
                     except queue.Empty:
                         pass
                 self.frame_queue.put((img, cursor_name, sent_time))
+                # Acknowledge only after the frame is decoded and ready for UI.
+                # The host keeps at most two frames in flight.
+                self._sock.sendall(b"\x06")
         except (OSError, ConnectionError):
             pass
         finally:

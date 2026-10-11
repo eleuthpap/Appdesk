@@ -30,7 +30,7 @@ MANIFEST
 #  Usually these files are written by a python script from a template
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
-# *.spec  (κρατάμε το Appdesk.spec αν θες να παραμείνει στο git)
+# Keep Appdesk.spec tracked as the project's build configuration.
 
 # Installer logs
 pip-log.txt
@@ -50,6 +50,10 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 cover/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.pytype/
 
 # Environments & Virtual Environments
 .venv/
@@ -59,6 +63,11 @@ env/
 env.bak/
 venv.bak/
 
+# Local environment settings (keep shareable examples)
+.env
+.env.*
+!.env.example
+
 # IDE & Editors
 .idea/
 .vscode/
@@ -66,6 +75,7 @@ venv.bak/
 *.swo
 *~
 .DS_Store
+Thumbs.db
 
 # Local Appdesk logs / scratch
 startup.sh

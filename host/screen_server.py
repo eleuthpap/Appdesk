@@ -76,6 +76,8 @@ class ScreenServer:
         [4-byte big-endian JPEG size][JPEG bytes]
         [1-byte cursor-name length][cursor name ASCII]
         [8-byte big-endian double: wall-clock send time (time.time())]
+    The client acknowledges each complete frame with one byte. At most two
+    frames may be in flight, so a slow link cannot build a stale backlog.
     """
 
     def __init__(self, relay_addr: str = "") -> None:
@@ -86,6 +88,7 @@ class ScreenServer:
         self.on_client_disconnected = None  # callback()
         self._running = False
         self._server_sock: socket.socket | None = None
+        self._client_sock: socket.socket | None = None
         self._thread: threading.Thread | None = None
 
     # ------------------------------------------------------------------ public
@@ -97,6 +100,11 @@ class ScreenServer:
 
     def stop(self) -> None:
         self._running = False
+        if self._client_sock:
+            try:
+                self._client_sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
         if self._server_sock:
             try:
                 self._server_sock.close()
@@ -188,6 +196,13 @@ class ScreenServer:
             self.on_client_disconnected()
 
     def _stream_to(self, conn: socket.socket) -> None:
+        self._client_sock = conn
+        try:
+            self._send_frames(conn)
+        finally:
+            self._client_sock = None
+
+    def _send_frames(self, conn: socket.socket) -> None:
         interval = 1.0 / config.FPS
         frames_sent = 0
         print("[HOST STREAM] Starting screen capture and stream...")
@@ -195,12 +210,21 @@ class ScreenServer:
             monitor = sct.monitors[1]   # primary monitor
             print(f"[HOST STREAM] Primary monitor size: {monitor['width']}x{monitor['height']}")
             while self._running:
+                # Limit frames in flight so a slow connection cannot accumulate
+                # seconds of old images in TCP buffers.
+                if frames_sent >= 2:
+                    try:
+                        if conn.recv(1) != b"\x06":
+                            break
+                    except OSError:
+                        break
                 t0 = time.monotonic()
 
                 # Capture → PIL → resize → JPEG
                 raw = sct.grab(monitor)
                 img = Image.frombytes("RGB", raw.size, bytes(raw.raw), "raw", "BGRX")
-                img = img.resize((config.STREAM_WIDTH, config.STREAM_HEIGHT), _RESAMPLE)
+                if img.size != (config.STREAM_WIDTH, config.STREAM_HEIGHT):
+                    img = img.resize((config.STREAM_WIDTH, config.STREAM_HEIGHT), _RESAMPLE)
                 buf = io.BytesIO()
                 img.save(buf, format="JPEG", quality=config.JPEG_QUALITY)
                 data = buf.getvalue()

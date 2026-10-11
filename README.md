@@ -237,6 +237,8 @@ For direct LAN mode, delete the value in the Relay host:port field, enter the Ho
 - Host input channel starts after session is ready.
 - Client opens screen and input channels separately.
 - UI shows FPS and approximate latency in remote session title.
+- The client acknowledges decoded frames so the host keeps at most two frames in flight. This prevents old frames from piling up on slower connections while keeping the configured image resolution and JPEG quality. If bandwidth is limited, FPS may fall.
+- Update both app computers for this frame protocol. In relay mode, deploy the updated `relay/server.py` to forward acknowledgements promptly.
 - If network drops, session window closes and warns user.
 - Direct LAN mode uses the Host local IP address and ports 5900 and 5901.
 

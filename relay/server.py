@@ -130,6 +130,8 @@ def _pipe(src: socket.socket, dst: socket.socket) -> None:
 def _handle(conn: socket.socket, addr: tuple) -> None:
     piped = False   # True once pipe threads own the socket lifecycle
     try:
+        # Forward small input events and frame acknowledgements immediately.
+        conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         msg  = json.loads(_recv_line(conn))
         role: str = msg["role"]      # "host" | "client"
         chan: str  = msg["channel"]  # "screen" | "input"
