@@ -5,6 +5,7 @@ import queue
 import socket
 import struct
 import threading
+import time
 
 from PIL import Image
 
@@ -84,8 +85,8 @@ class ScreenReceiver:
                     self._recv_exactly(cursor_len).decode("ascii")
                     if cursor_len else "arrow"
                 )
-                # Wall-clock send timestamp
-                sent_time = struct.unpack(">d", self._recv_exactly(8))[0]
+                # A client clock value echoed by the host (-1 until available).
+                ack_time = struct.unpack(">d", self._recv_exactly(8))[0]
 
                 img = Image.open(io.BytesIO(jpeg))
                 img.load()
@@ -95,10 +96,10 @@ class ScreenReceiver:
                         self.frame_queue.get_nowait()
                     except queue.Empty:
                         pass
-                self.frame_queue.put((img, cursor_name, sent_time))
+                self.frame_queue.put((img, cursor_name, ack_time))
                 # Acknowledge only after the frame is decoded and ready for UI.
                 # The host keeps at most two frames in flight.
-                self._sock.sendall(b"\x06")
+                self._sock.sendall(struct.pack(">d", time.monotonic()))
         except (OSError, ConnectionError):
             pass
         finally:

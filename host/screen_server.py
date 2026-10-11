@@ -75,8 +75,9 @@ class ScreenServer:
     Protocol (SCREEN_PORT) per frame:
         [4-byte big-endian JPEG size][JPEG bytes]
         [1-byte cursor-name length][cursor name ASCII]
-        [8-byte big-endian double: wall-clock send time (time.time())]
-    The client acknowledges each complete frame with one byte. At most two
+        [8-byte big-endian double: echoed client acknowledgement time]
+    The client acknowledges each complete frame with its monotonic timestamp.
+    An initial value of -1 means no acknowledgement has arrived yet. At most two
     frames may be in flight, so a slow link cannot build a stale backlog.
     """
 
@@ -205,6 +206,7 @@ class ScreenServer:
     def _send_frames(self, conn: socket.socket) -> None:
         interval = 1.0 / config.FPS
         frames_sent = 0
+        last_ack_time = -1.0
         print("[HOST STREAM] Starting screen capture and stream...")
         with mss.mss() as sct:
             monitor = sct.monitors[1]   # primary monitor
@@ -214,9 +216,16 @@ class ScreenServer:
                 # seconds of old images in TCP buffers.
                 if frames_sent >= 2:
                     try:
-                        if conn.recv(1) != b"\x06":
-                            break
-                    except OSError:
+                        ack = bytearray(8)
+                        view = memoryview(ack)
+                        received = 0
+                        while received < len(ack):
+                            count = conn.recv_into(view[received:])
+                            if count == 0:
+                                raise ConnectionError("Client disconnected")
+                            received += count
+                        last_ack_time = struct.unpack(">d", ack)[0]
+                    except (OSError, ConnectionError):
                         break
                 t0 = time.monotonic()
 
@@ -229,16 +238,17 @@ class ScreenServer:
                 img.save(buf, format="JPEG", quality=config.JPEG_QUALITY)
                 data = buf.getvalue()
 
-                # Cursor name + wall-clock timestamp appended after JPEG
+                # Echo the client's clock value so it can measure a frame
+                # response without comparing clocks on different computers.
                 cursor = _current_cursor().encode("ascii")
-                ts = struct.pack(">d", time.time())
+                ack_time = struct.pack(">d", last_ack_time)
 
-                # Send: [4-byte JPEG size][JPEG][1-byte cursor len][cursor][8-byte time]
+                # Send: [4-byte JPEG size][JPEG][1-byte cursor len][cursor][8-byte echoed time]
                 try:
                     conn.sendall(
                         struct.pack(">L", len(data)) + data
                         + struct.pack("B", len(cursor)) + cursor
-                        + ts
+                        + ack_time
                     )
                     frames_sent += 1
                     if frames_sent <= 5 or frames_sent % 100 == 0:

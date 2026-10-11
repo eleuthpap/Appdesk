@@ -93,25 +93,13 @@ class SessionWindow(ctk.CTkToplevel):
 
     def _update_frame(self) -> None:
         try:
-            img, cursor_name, sent_time = self._receiver.frame_queue.get_nowait()
+            img, cursor_name, ack_time = self._receiver.frame_queue.get_nowait()
             # Always render the freshest frame to avoid display lag under load.
             while True:
                 try:
-                    img, cursor_name, sent_time = self._receiver.frame_queue.get_nowait()
+                    img, cursor_name, ack_time = self._receiver.frame_queue.get_nowait()
                 except queue.Empty:
                     break
-            now = time.time()
-
-            # FPS: count frames that arrived within the last second
-            self._frame_times.append(now)
-            while self._frame_times and self._frame_times[0] < now - 1.0:
-                self._frame_times.popleft()
-            fps = len(self._frame_times)
-
-            # Latency estimate (accurate on loopback; requires NTP sync on LAN)
-            latency_ms = max(0, int((now - sent_time) * 1000))
-
-            self.title(f"Appdesk – Remote Session  |  {fps} FPS  |  {latency_ms} ms")
 
             # Sync cursor shape to host cursor
             if cursor_name != self._last_cursor:
@@ -131,6 +119,17 @@ class SessionWindow(ctk.CTkToplevel):
                 )
             else:
                 self._canvas.itemconfig(self._image_item, image=self._photo)
+
+            now = time.monotonic()
+            # Count frames actually rendered during the last second.
+            self._frame_times.append(now)
+            while self._frame_times and self._frame_times[0] < now - 1.0:
+                self._frame_times.popleft()
+            response = f"{(now - ack_time) * 1000:.0f} ms" if ack_time >= 0 else "-- ms"
+            self.title(
+                f"Appdesk – Remote Session  |  {len(self._frame_times)} FPS"
+                f"  |  Frame response {response}"
+            )
         except queue.Empty:
             pass
 
