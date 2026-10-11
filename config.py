@@ -4,7 +4,8 @@ SCREEN_PORT: int = 5900   # Host streams frames to client on this port
 INPUT_PORT:  int = 5901   # Client sends input events to host on this port
 
 JPEG_QUALITY: int = 70    # 1-95; lower = faster, higher = sharper
-FPS:          int = 30    # Target capture / stream frame rate
+FPS:          int = 60    # Maximum capture / stream FPS; slow links run lower
+MAX_IN_FLIGHT_FRAMES: int = 16  # Pipeline ceiling; reduced if frames queue up
 
 STREAM_WIDTH:  int = 1600  # Resolution frames are resized to before sending
 STREAM_HEIGHT: int = 900

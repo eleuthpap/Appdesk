@@ -237,7 +237,8 @@ For direct LAN mode, delete the value in the Relay host:port field, enter the Ho
 - Host input channel starts after session is ready.
 - Client opens screen and input channels separately.
 - UI shows rendered FPS and frame response time in the remote session title. Frame response is measured from a client acknowledgement until a later frame is rendered, using only the client's monotonic clock. It includes network travel, host processing, and client rendering; it is not a one-way network latency reading.
-- The client acknowledges decoded frames with its clock value so the host keeps at most two frames in flight and echoes that value in a later frame. This prevents old frames from piling up on slower connections while keeping the configured image resolution and JPEG quality. If bandwidth is limited, FPS may fall.
+- The stream targets up to 60 FPS with the existing image size and JPEG quality. Actual FPS depends on screen capture and encoding speed, client rendering speed, and network throughput. The host adjusts how many frames may be in flight to fill a high-latency relay path, and backs off if acknowledgements indicate that frames are queuing.
+- The client acknowledges decoded frames with its clock value; the host echoes that value in a later frame and uses acknowledgement timing to tune its send window. The configured image resolution and JPEG quality stay the same. If bandwidth is limited, FPS may fall.
 - The client checks for fresh frames every 5 ms and sends input from a worker thread. Pending mouse moves are merged; clicks and keys keep their order.
 - Update both app computers for this frame protocol. In relay mode, deploy the updated `relay/server.py` to forward acknowledgements promptly.
 - If network drops, session window closes and warns user.

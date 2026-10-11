@@ -98,7 +98,7 @@ class ScreenReceiver:
                         pass
                 self.frame_queue.put((img, cursor_name, ack_time))
                 # Acknowledge only after the frame is decoded and ready for UI.
-                # The host keeps at most two frames in flight.
+                # The host uses acknowledgements to bound and tune its pipeline.
                 self._sock.sendall(struct.pack(">d", time.monotonic()))
         except (OSError, ConnectionError):
             pass

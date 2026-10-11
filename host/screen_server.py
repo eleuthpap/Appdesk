@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import io
+import select
 import socket
 import struct
 import threading
 import time
+from collections import deque
 
 import mss
 from PIL import Image
@@ -77,8 +79,8 @@ class ScreenServer:
         [1-byte cursor-name length][cursor name ASCII]
         [8-byte big-endian double: echoed client acknowledgement time]
     The client acknowledges each complete frame with its monotonic timestamp.
-    An initial value of -1 means no acknowledgement has arrived yet. At most two
-    frames may be in flight, so a slow link cannot build a stale backlog.
+    An initial value of -1 means no acknowledgement has arrived yet. The
+    sender adapts its in-flight frame limit to the connection's response time.
     """
 
     def __init__(self, relay_addr: str = "") -> None:
@@ -207,57 +209,112 @@ class ScreenServer:
         interval = 1.0 / config.FPS
         frames_sent = 0
         last_ack_time = -1.0
-        print("[HOST STREAM] Starting screen capture and stream...")
-        with mss.mss() as sct:
-            monitor = sct.monitors[1]   # primary monitor
-            print(f"[HOST STREAM] Primary monitor size: {monitor['width']}x{monitor['height']}")
-            while self._running:
-                # Limit frames in flight so a slow connection cannot accumulate
-                # seconds of old images in TCP buffers.
-                if frames_sent >= 2:
-                    try:
-                        ack = bytearray(8)
-                        view = memoryview(ack)
-                        received = 0
-                        while received < len(ack):
-                            count = conn.recv_into(view[received:])
-                            if count == 0:
-                                raise ConnectionError("Client disconnected")
-                            received += count
+        pending: deque[float] = deque()
+        condition = threading.Condition()
+        window = 2
+        min_rtt: float | None = None
+        good_acks = 0
+        ack_closed = False
+        ack_stop = threading.Event()
+
+        def read_acks() -> None:
+            nonlocal last_ack_time, window, min_rtt, good_acks, ack_closed
+            try:
+                while self._running and not ack_stop.is_set():
+                    ack = bytearray(8)
+                    view = memoryview(ack)
+                    received = 0
+                    while received < len(ack):
+                        ready, _, _ = select.select([conn], [], [], 0.2)
+                        if not ready:
+                            if ack_stop.is_set() or not self._running:
+                                return
+                            continue
+                        count = conn.recv_into(view[received:])
+                        if count == 0:
+                            raise ConnectionError("Client disconnected")
+                        received += count
+                    now = time.monotonic()
+                    with condition:
+                        if not pending:
+                            raise ConnectionError("Unexpected frame acknowledgement")
+                        rtt = now - pending.popleft()
                         last_ack_time = struct.unpack(">d", ack)[0]
-                    except (OSError, ConnectionError):
+                        min_rtt = rtt if min_rtt is None else min(min_rtt, rtt)
+                        # Grow the pipeline on a clear link; back off when the
+                        # response exceeds the best observed time by enough to
+                        # indicate that frames are waiting in a buffer.
+                        if rtt > min_rtt + max(0.1, min_rtt * 0.25):
+                            window = max(2, window - 2)
+                            good_acks = 0
+                        else:
+                            good_acks += 1
+                            if good_acks >= max(2, window // 2):
+                                window = min(config.MAX_IN_FLIGHT_FRAMES, window + 1)
+                                good_acks = 0
+                        condition.notify_all()
+            except (OSError, ConnectionError, ValueError):
+                pass
+            finally:
+                with condition:
+                    ack_closed = True
+                    condition.notify_all()
+
+        ack_thread = threading.Thread(target=read_acks, daemon=True)
+        ack_thread.start()
+        print("[HOST STREAM] Starting screen capture and stream...")
+        try:
+            with mss.mss() as sct:
+                monitor = sct.monitors[1]   # primary monitor
+                print(f"[HOST STREAM] Primary monitor size: {monitor['width']}x{monitor['height']}")
+                while self._running:
+                    with condition:
+                        while len(pending) >= window and not ack_closed and self._running:
+                            condition.wait(timeout=0.5)
+                        if ack_closed or not self._running:
+                            break
+                    t0 = time.monotonic()
+
+                    # Capture → PIL → resize → JPEG
+                    raw = sct.grab(monitor)
+                    img = Image.frombytes("RGB", raw.size, bytes(raw.raw), "raw", "BGRX")
+                    if img.size != (config.STREAM_WIDTH, config.STREAM_HEIGHT):
+                        img = img.resize((config.STREAM_WIDTH, config.STREAM_HEIGHT), _RESAMPLE)
+                    buf = io.BytesIO()
+                    img.save(buf, format="JPEG", quality=config.JPEG_QUALITY)
+                    data = buf.getvalue()
+
+                    # Echo the client's clock value so it can measure a frame
+                    # response without comparing clocks on different computers.
+                    cursor = _current_cursor().encode("ascii")
+                    with condition:
+                        if ack_closed or not self._running:
+                            break
+                        ack_time = struct.pack(">d", last_ack_time)
+                        pending.append(time.monotonic())
+
+                    # Send: [4-byte JPEG size][JPEG][1-byte cursor len][cursor][8-byte echoed time]
+                    try:
+                        conn.sendall(
+                            struct.pack(">L", len(data)) + data
+                            + struct.pack("B", len(cursor)) + cursor
+                            + ack_time
+                        )
+                        frames_sent += 1
+                        if frames_sent <= 5 or frames_sent % 100 == 0:
+                            print(f"[HOST STREAM] Sent frame #{frames_sent} ({len(data)} bytes)")
+                    except OSError as exc:
+                        print(f"[HOST STREAM ERROR] Socket error while sending: {exc}")
                         break
-                t0 = time.monotonic()
 
-                # Capture → PIL → resize → JPEG
-                raw = sct.grab(monitor)
-                img = Image.frombytes("RGB", raw.size, bytes(raw.raw), "raw", "BGRX")
-                if img.size != (config.STREAM_WIDTH, config.STREAM_HEIGHT):
-                    img = img.resize((config.STREAM_WIDTH, config.STREAM_HEIGHT), _RESAMPLE)
-                buf = io.BytesIO()
-                img.save(buf, format="JPEG", quality=config.JPEG_QUALITY)
-                data = buf.getvalue()
-
-                # Echo the client's clock value so it can measure a frame
-                # response without comparing clocks on different computers.
-                cursor = _current_cursor().encode("ascii")
-                ack_time = struct.pack(">d", last_ack_time)
-
-                # Send: [4-byte JPEG size][JPEG][1-byte cursor len][cursor][8-byte echoed time]
-                try:
-                    conn.sendall(
-                        struct.pack(">L", len(data)) + data
-                        + struct.pack("B", len(cursor)) + cursor
-                        + ack_time
-                    )
-                    frames_sent += 1
-                    if frames_sent <= 5 or frames_sent % 100 == 0:
-                        print(f"[HOST STREAM] Sent frame #{frames_sent} ({len(data)} bytes)")
-                except OSError as exc:
-                    print(f"[HOST STREAM ERROR] Socket error while sending: {exc}")
-                    break
-
-                # Throttle to target FPS
-                remaining = interval - (time.monotonic() - t0)
-                if remaining > 0:
-                    time.sleep(remaining)
+                    # Throttle to target FPS
+                    remaining = interval - (time.monotonic() - t0)
+                    if remaining > 0:
+                        time.sleep(remaining)
+        finally:
+            ack_stop.set()
+            try:
+                conn.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            ack_thread.join(timeout=1.0)
